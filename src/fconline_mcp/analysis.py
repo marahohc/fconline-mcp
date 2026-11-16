@@ -6,7 +6,7 @@ get_player_stats처럼 따로 요청할 때만 꺼낸다.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from statistics import mean
 from typing import Iterable
 
@@ -15,6 +15,19 @@ from .api import Lookup
 SUB_POSITION = 28
 HALF_OFFSET_MIN = {0: 0, 1: 45, 2: 90, 3: 105, 4: 120}  # 전반/후반/연장전반/연장후반/승부차기
 SMALL_SAMPLE = 10
+# 비슷한 역할의 포지션 묶음. 실제 감독모드 20경기에서 상대의 LW·ST 선발이 0명이었고
+# 대부분 LAM/CAM/RAM, LM/RM을 썼다. 정확히 같은 포지션만 세면 추천 후보가 비기 쉽다.
+SIMILAR_POSITIONS = {
+    "ST": ("ST", "LS", "RS", "CF"), "CF": ("CF", "ST", "LS", "RS"),
+    "LW": ("LW", "LF", "LM", "LAM"), "RW": ("RW", "RF", "RM", "RAM"),
+    "LM": ("LM", "LW", "LAM"), "RM": ("RM", "RW", "RAM"),
+    "LAM": ("LAM", "LW", "LF", "LM"), "RAM": ("RAM", "RW", "RF", "RM"),
+    "CAM": ("CAM", "CF"),
+    "CM": ("CM", "LCM", "RCM"), "LCM": ("LCM", "CM", "RCM"), "RCM": ("RCM", "CM", "LCM"),
+    "CDM": ("CDM", "LDM", "RDM"), "LDM": ("LDM", "CDM", "RDM"), "RDM": ("RDM", "CDM", "LDM"),
+    "CB": ("CB", "LCB", "RCB", "SW"), "LCB": ("LCB", "CB", "RCB"), "RCB": ("RCB", "CB", "LCB"),
+    "LB": ("LB", "LWB"), "LWB": ("LWB", "LB"), "RB": ("RB", "RWB"), "RWB": ("RWB", "RB"),
+}
 GOAL_RESULT = 3  # shootDetail.result: 3 = 골 (경기 데이터로 goalTotal과 대조해 확인)
 
 # 경기 기록 중 선수 분석에 쓰는 항목 (경기당 평균으로 집계)
@@ -58,8 +71,16 @@ def _score(side: dict | None) -> int:
     return side["shoot"]["goalTotalDisplay"] if side else 0
 
 
+def _starter_rating(side: dict) -> float | None:
+    # 넥슨 matchDetail.averageRating은 선발 평점 합을 18명(교체 포함)으로 나눈 값이라
+    # 게임 화면보다 훨씬 낮게 나온다(실제 경기 2건으로 확인). 선발만으로 다시 계산한다.
+    ratings = [p["status"]["spRating"] for p in side.get("player", []) if p["spPosition"] != SUB_POSITION]
+    return _r(mean(ratings)) if ratings else None
+
+
 def _team_stats(side: dict) -> dict:
-    s, p, d, md = side["shoot"], side["pass"], side["defence"], side["matchDetail"]
+    s, p, d = side["shoot"], side["pass"], side["defence"]
+    md = side["matchDetail"]
     return {
         "점유율": md["possession"],
         "슈팅": s["shootTotal"],
@@ -67,7 +88,7 @@ def _team_stats(side: dict) -> dict:
         "패스성공률": _rate(p["passSuccess"], p["passTry"]),
         "스루패스성공률": _rate(p["throughPassSuccess"], p["throughPassTry"]),
         "태클성공률": _rate(d["tackleSuccess"], d["tackleTry"]),
-        "평균평점": _r(md["averageRating"]),
+        "선발 평균평점": _starter_rating(side),
     }
 
 
@@ -213,6 +234,35 @@ def player_stats(details: Iterable[dict], ouid: str, spids: set[int], lk: Lookup
             }
         )
     return out
+
+
+def position_trends(details: Iterable[dict], ouid: str, positions: set[int], lk: Lookup, top: int = 10) -> dict:
+    """최근 경기 상대들이 해당 포지션(들)에 선발로 쓴 선수 집계 (비슷한 등급 유저들의 실제 선택)."""
+    groups: dict[int, list[dict]] = defaultdict(list)
+    used_pos: dict[int, Counter] = defaultdict(Counter)
+    for d in details:
+        _, opp = split_sides(d, ouid)
+        for p in (opp or {}).get("player", []):
+            if p["spPosition"] in positions:
+                groups[p["spId"]].append(p["status"])
+                used_pos[p["spId"]][lk.position_name.get(p["spPosition"], p["spPosition"])] += 1
+    total = sum(len(v) for v in groups.values())
+    ranked = sorted(groups.items(), key=lambda kv: (-len(kv[1]), -mean(s["spRating"] for s in kv[1])))
+    return {
+        "표본(상대 선발 수)": total,
+        "선수": [
+            {
+                "선수": lk.card_label(spid),
+                "선수명": lk.player_name.get(spid, str(spid)),
+                "사용": len(st),
+                "실제 포지션": dict(used_pos[spid]),
+                "평균평점": _r(mean(s["spRating"] for s in st)),
+                "경기당 골": _r(sum(s.get("goal", 0) for s in st) / len(st)),
+                "경기당 도움": _r(sum(s.get("assist", 0) for s in st) / len(st)),
+            }
+            for spid, st in ranked[:top]
+        ],
+    }
 
 
 def ranker_view(row: dict, lk: Lookup) -> dict:

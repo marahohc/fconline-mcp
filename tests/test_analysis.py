@@ -65,6 +65,18 @@ def test_brief_and_summary():
     assert summary["내 선발 라인업"][0]["선수"] == "가상 공격수 (TEST)"
 
 
+def test_team_rating_uses_starters_not_nexon_average():
+    # 실제 경기(0:5)에서 넥슨 averageRating=3.29는 선발 11명 평점 합 59.3을 18로 나눈 값이었다.
+    m = match("m1", "승", 1, 0)
+    me = m["matchInfo"][0]
+    me["player"][0]["status"]["spRating"] = 7.0
+    me["player"][1]["status"]["spRating"] = 5.0
+    me["player"][2]["status"]["spRating"] = 0  # 교체 명단
+    me["matchDetail"]["averageRating"] = 12.0 / 18
+    summary = analysis.match_summary(m, "me", LK)
+    assert summary["내 팀"]["선발 평균평점"] == 6.0
+
+
 def test_form_summary():
     ms = [match("a", "승", 2, 0), match("b", "무", 1, 1), match("c", "패", 0, 3)]
     f = analysis.form_summary(ms, "me", LK)
@@ -85,3 +97,23 @@ def test_compare_small_sample_warning():
     row = {"spid": 101000001, "spPosition": 25, "status": {"matchCount": 3, "goal": 1.0}}
     out = analysis.compare_to_ranker(mine, row, LK)
     assert "주의" in out and out["비교(내 기록 / 랭커 평균)"]["goal"] == {"나": 1.0, "랭커": 1.0}
+
+
+def test_position_trends_counts_opponents_only():
+    ms = []
+    for i, rating in enumerate([8.0, 6.0, 7.0]):
+        m = match(f"t{i}", "승", 1, 0)
+        opp_spid = 101000001 if i < 2 else 101000002
+        m["matchInfo"][1]["player"] = [
+            {"spId": opp_spid, "spPosition": 25, "status": status(spRating=rating, goal=1)},
+            {"spId": 101000002, "spPosition": 5, "status": status()},  # 다른 포지션은 제외
+            {"spId": 101000001, "spPosition": 28, "status": status()},  # 교체 명단 제외
+        ]
+        ms.append(m)
+    out = analysis.position_trends(ms, "me", {25}, LK)
+    assert out["표본(상대 선발 수)"] == 3
+    top = out["선수"][0]
+    assert top["선수"] == "가상 공격수 (TEST)" and top["선수명"] == "가상 공격수"
+    assert top["사용"] == 2 and top["평균평점"] == 7.0 and top["경기당 골"] == 1.0
+    # 내 팀 ST(가상 공격수)는 세지 않는다: 총합이 상대 3명분이어야 함
+    assert sum(r["사용"] for r in out["선수"]) == 3

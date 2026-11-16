@@ -22,7 +22,8 @@ mcp = MCPServer(
     instructions=(
         "FC 온라인 유저의 경기 기록을 넥슨 Open API로 조회한다. "
         "모든 수치는 실제 경기 데이터에서 나온 것만 사용하고, 선수 능력치(속력·슛 등)는 이 API에 없으므로 추측하지 않는다. "
-        "선수를 추천할 때는 get_ranker_stats로 실제 랭커 기록을 확인한 뒤 근거와 함께 말한다."
+        "선수를 추천할 때는 후보를 직접 지어내지 말고 get_position_trends로 실제로 쓰이는 선수를 모은 뒤, "
+        "get_ranker_stats로 랭커 기록을 확인해 근거와 함께 말한다."
     ),
 )
 
@@ -181,9 +182,46 @@ async def compare_with_rankers(nickname: str, player_name: str, match_type: str 
 
 
 @mcp.tool()
+async def get_position_trends(
+    nickname: str, position: str, match_type: str = "공식경기", n: int = 30, include_similar: bool = True
+) -> dict[str, Any]:
+    """유저의 최근 n경기(최대 30) 상대들이 특정 포지션(예: LW, ST, CDM)에 선발로 쓴 선수를
+    사용 횟수·실제 포지션·평균 평점·경기당 골/도움과 함께 돌려준다. 비슷한 등급 유저들이 실제로 쓰는 선수 목록이다.
+    'LW에 쓸 만한 선수 추천해줘'처럼 후보가 정해지지 않은 추천 질문에는 이 도구로 후보를 모은 뒤,
+    상위 후보의 '선수명'을 get_ranker_stats에 넣어 랭커 기록으로 검증한다.
+    include_similar=True(기본)면 비슷한 역할 포지션도 함께 센다(예: LW → LW·LF·LM·LAM).
+    포메이션에 따라 LW 자리가 아예 없는 경우가 많기 때문이다. 표본이 적으면 결과에 주의가 붙는다."""
+    try:
+        lk = await _lk()
+        pos = lk.resolve_position(position)
+        name = lk.position_name.get(pos, str(pos))
+        names = analysis.SIMILAR_POSITIONS.get(name, (name,)) if include_similar else (name,)
+        codes = {lk.position_code[x] for x in names if x in lk.position_code} | {pos}
+        ouid, mt, details = await _recent_details(nickname, match_type, n)
+        out = analysis.position_trends(details, ouid, codes, lk)
+        result = {
+            "매치 종류": lk.matchtype_name.get(mt, mt),
+            "포지션": "·".join(names),
+            "조회 경기수": len(details),
+            **out,
+        }
+        top_use = max((r["사용"] for r in out["선수"]), default=0)
+        if top_use <= 2:
+            result["주의"] = (
+                f"가장 많이 쓰인 선수도 {top_use}회뿐이라 순위에는 의미가 없습니다. "
+                "'실제로 쓰이는 후보 목록'으로만 보고, get_ranker_stats로 검증하세요."
+            )
+        return result
+    except (NexonApiError, KeyError, ValueError) as e:
+        return _err(e)
+
+
+@mcp.tool()
 async def get_ranker_stats(player_name: str, position: str, match_type: str = "공식경기", top: int = 5) -> dict[str, Any]:
     """특정 선수를 특정 포지션(예: ST, LW, CAM, CDM, CB, GK)에서 쓴 랭커들의 경기당 평균 기록을
     카드(시즌)별로 돌려준다. 랭커들이 실제로 쓴 카드만 나오며, 표본 경기수가 많은 순으로 top개.
+    넥슨은 카드당 표본을 최대 20경기로 자르므로, 20경기는 '많이 쓰인다'는 뜻이지 순위 근거는 아니다.
+    이 도구는 후보 이름을 받아 검증만 한다. 후보 목록이 없으면 먼저 get_position_trends를 쓴다.
     다른 선수를 추천하거나 후보끼리 비교할 때, 추천 전에 반드시 이 도구로 실제 기록을 확인한다.
     선수 이름이 넥슨 선수 목록에 없으면 오류와 비슷한 이름을 돌려준다(없는 선수를 추천하지 않기 위함)."""
     try:
