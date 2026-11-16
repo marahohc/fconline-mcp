@@ -182,7 +182,7 @@ async def compare_with_rankers(nickname: str, player_name: str, match_type: str 
 
 @mcp.tool()
 async def get_position_trends(
-    nickname: str, position: str, match_type: str = "공식경기", n: int = 30, include_similar: bool = True
+    nickname: str, position: str, match_type: str = "공식경기", n: int = 20, include_similar: bool = True
 ) -> dict[str, Any]:
     """유저의 최근 n경기(최대 30) 상대들이 특정 포지션(예: LW, ST, CDM)에 선발로 쓴 선수를
     사용 횟수·실제 포지션·평균 평점·경기당 골/도움과 함께 돌려준다. 비슷한 등급 유저들이 실제로 쓰는 선수 목록이다.

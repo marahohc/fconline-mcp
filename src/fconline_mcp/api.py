@@ -14,6 +14,7 @@ import difflib
 import json
 import logging
 import os
+import random
 import time
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,10 @@ BASE_URL = "https://open.api.nexon.com"
 META_TTL_SECONDS = 7 * 24 * 3600
 OUID_TTL_SECONDS = 10 * 60
 RANKER_BATCH = 20  # 직접 확인: 20개까지는 되고 40개는 OPENAPI00004 오류
+# 응답 헤더 x-ratelimit-limit: 5 (초당 5건). 동시 개수만 막으면 응답이 빨라서 초당 수십 건이 나가
+# 30경기 조회에서 429가 쏟아졌다. 요청 시작 간격을 벌려 초당 4건 정도로 맞춘다.
+MIN_INTERVAL_SECONDS = 0.25
+RETRY_DELAYS = (1.0, 2.0, 4.0, 8.0)  # 429/5xx 재시도 대기. 마지막 시도 뒤에는 기다리지 않는다.
 
 # seasonid.json은 2026-11-19 종료 예정 공지 → class.json 사용
 META_FILES = ("spid", "class", "spposition", "matchtype", "division")
@@ -55,6 +60,8 @@ class NexonClient:
             timeout=15.0,
         )
         self._sem = asyncio.Semaphore(2)  # 개발 단계 키는 호출 제한이 빡빡해서 동시 2개로 제한 (4개에서 429 다수 확인)
+        self._rate_lock = asyncio.Lock()
+        self._next_slot = 0.0  # 다음 요청을 보내도 되는 시각 (time.monotonic 기준)
         self._ouid: dict[str, tuple[float, str]] = {}
         self._match: dict[str, dict] = {}
         self._meta: dict[str, Any] = {}
@@ -63,16 +70,27 @@ class NexonClient:
         await self._http.aclose()
 
     # ---------- 저수준 호출 ----------
+    async def _wait_for_slot(self) -> None:
+        """요청 시작 간격을 MIN_INTERVAL_SECONDS 이상으로 유지한다 (초당 호출 제한 대응)."""
+        async with self._rate_lock:
+            now = time.monotonic()
+            wait = self._next_slot - now
+            self._next_slot = max(now, self._next_slot) + MIN_INTERVAL_SECONDS
+        if wait > 0:
+            await asyncio.sleep(wait)
+
     async def _get(self, path: str, params: dict | None = None) -> Any:
         last_err, code = "", None
-        for attempt in range(4):
+        for attempt in range(len(RETRY_DELAYS) + 1):
             async with self._sem:
+                await self._wait_for_slot()
                 resp = await self._http.get(path, params=params)
             if resp.status_code == 200:
                 return resp.json()
             if resp.status_code in (429, 500, 502, 503, 504):
                 last_err = f"HTTP {resp.status_code}"
-                await asyncio.sleep(0.5 * 2**attempt)
+                if attempt < len(RETRY_DELAYS):
+                    await asyncio.sleep(RETRY_DELAYS[attempt] * random.uniform(1.0, 1.5))
                 continue
             try:
                 err = resp.json().get("error", {})
