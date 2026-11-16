@@ -6,7 +6,6 @@ Claude 같은 AI 어시스턴트가 도구 설명(docstring)을 읽고 어떤 �
 
 from __future__ import annotations
 
-import difflib
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
@@ -49,7 +48,7 @@ def _resolve_player(lk: Lookup, name: str) -> list[int]:
     ids = lk.ids_by_name.get(name.strip())
     if ids:
         return ids
-    close = difflib.get_close_matches(name.strip(), list(lk.ids_by_name), n=5, cutoff=0.5)
+    close = lk.similar_names(name)
     hint = f" 비슷한 이름: {', '.join(close)}" if close else ""
     raise NexonApiError(f"'{name}'라는 선수가 넥슨 선수 목록에 없습니다.{hint}")
 
