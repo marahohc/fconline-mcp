@@ -1,0 +1,26 @@
+[project]
+name = "fconline-mcp"
+version = "0.1.0"
+description = "넥슨 Open API의 FC 온라인 경기 데이터를 AI 어시스턴트가 쓸 수 있게 해 주는 MCP 서버"
+readme = "README.md"
+authors = [
+    { name = "조하람" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "mcp[cli]>=2.3.0",
+    "python-dotenv>=1.2.4",
+]
+
+[project.scripts]
+fconline-mcp = "fconline_mcp.server:main"
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

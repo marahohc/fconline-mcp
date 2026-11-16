@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fconline": {
+      "command": "uv",
+      "args": ["run", "fconline-mcp"]
+    }
+  }
+}
