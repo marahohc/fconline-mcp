@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import json
 import logging
 import os
@@ -178,25 +177,6 @@ class NexonClient:
         return await self._get("/fconline/v1/ranker-stats", {"matchtype": matchtype, "players": body})
 
 
-_CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
-_JUNG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
-_JONG = " ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ"
-
-
-def _jamo(text: str) -> str:
-    """한글 음절을 초성·중성·종성으로 푼다. '흥' → 'ㅎㅡㅇ'. 한글이 아니면 그대로."""
-    out = []
-    for ch in text:
-        k = ord(ch) - 0xAC00
-        if 0 <= k < 11172:
-            out += [_CHO[k // 588], _JUNG[k % 588 // 28]]
-            if k % 28:
-                out.append(_JONG[k % 28])
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
 class Lookup:
     """메타데이터를 이름 ↔ 코드로 바꾸는 표."""
 
@@ -211,7 +191,6 @@ class Lookup:
         self.matchtype_name = {x["matchtype"]: x["desc"] for x in mtype}
         self.matchtype_code = {v: k for k, v in self.matchtype_name.items()}
         self.division_name = {x["divisionId"]: x["divisionName"] for x in div}
-        self._jamo_names: dict[str, str] | None = None
 
     def card_label(self, spid: int) -> str:
         """'손흥민 (클래스명)' 형태. 클래스는 spid 앞 3자리."""
@@ -220,29 +199,6 @@ class Lookup:
         if not klass:
             return name
         return f"{name} ({klass.split(' (')[0]})"  # 'GRU (Greatest Runner-Ups)' → 'GRU' 로 줄임
-
-    def similar_names(self, query: str, n: int = 5, cutoff: float = 0.6) -> list[str]:
-        """없는 이름에 대한 후보. ① 이름의 한 단어와 정확히 같은 선수('살라' → '모하메드 살라'),
-        ② 한글을 자모로 풀어 비교한 유사도. 글자 단위로 비교하면 '손홍민'에서 '손흥민'이 4번째로 밀렸다.
-        유사도가 같으면 카드가 많은(더 알려진) 선수를 앞에 둔다."""
-        q = query.strip()
-        by_cards = lambda name: -len(self.ids_by_name[name])  # noqa: E731
-        exact_word = sorted((nm for nm in self.ids_by_name if q in nm.split()), key=by_cards)
-        if self._jamo_names is None:
-            self._jamo_names = {nm: _jamo(nm) for nm in self.ids_by_name}
-        sm = difflib.SequenceMatcher()
-        sm.set_seq2(_jamo(q))
-        scored = []
-        for nm, jm in self._jamo_names.items():
-            sm.set_seq1(jm)
-            if sm.real_quick_ratio() >= cutoff and sm.quick_ratio() >= cutoff and (r := sm.ratio()) >= cutoff:
-                scored.append((-r, by_cards(nm), nm))
-        fuzzy = [nm for *_, nm in sorted(scored)]
-        out: list[str] = []
-        for nm in exact_word + fuzzy:
-            if nm not in out:
-                out.append(nm)
-        return out[:n]
 
     def resolve_matchtype(self, value: str | int) -> int:
         if isinstance(value, int) or str(value).isdigit():

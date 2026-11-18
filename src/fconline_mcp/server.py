@@ -48,9 +48,7 @@ def _resolve_player(lk: Lookup, name: str) -> list[int]:
     ids = lk.ids_by_name.get(name.strip())
     if ids:
         return ids
-    close = lk.similar_names(name)
-    hint = f" 비슷한 이름: {', '.join(close)}" if close else ""
-    raise NexonApiError(f"'{name}'라는 선수가 넥슨 선수 목록에 없습니다.{hint}")
+    raise NexonApiError(f"'{name}'라는 선수가 넥슨 선수 목록에 없습니다. 정확한 이름으로 다시 입력해 주세요.")
 
 
 async def _recent_details(nickname: str, match_type: str | int, n: int) -> tuple[str, int, list[dict]]:
@@ -222,7 +220,8 @@ async def get_ranker_stats(player_name: str, position: str, match_type: str = "�
     넥슨은 카드당 표본을 최대 20경기로 자르므로, 20경기는 '많이 쓰인다'는 뜻이지 순위 근거는 아니다.
     이 도구는 후보 이름을 받아 검증만 한다. 후보 목록이 없으면 먼저 get_position_trends를 쓴다.
     다른 선수를 추천하거나 후보끼리 비교할 때, 추천 전에 반드시 이 도구로 실제 기록을 확인한다.
-    선수 이름이 넥슨 선수 목록에 없으면 오류와 비슷한 이름을 돌려준다(없는 선수를 추천하지 않기 위함)."""
+    선수 이름은 넥슨 선수 목록과 정확히 같아야 하며, 없으면 오류를 돌려준다(없는 선수를 추천하지 않기 위함).
+    오타로 보이는 이름도 임의로 고쳐 조회하지 않는다."""
     try:
         lk = await _lk()
         spids = _resolve_player(lk, player_name)
